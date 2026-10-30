@@ -23,6 +23,12 @@ jobs:
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd samples/CameraAccessAndroid
+
+          # Удаляем жестко заданный путь к macOS Java
+          if [ -f "gradle.properties" ]; then
+            sed -i '/org.gradle.java.home/d' gradle.properties
+          fi
+
           echo "github_token=$GH_TOKEN" >> local.properties
 
           SECRET_PATH="app/src/main/java/com/meta/wearable/dat/externalsampleapps/cameraaccess"
