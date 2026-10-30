@@ -24,13 +24,36 @@ jobs:
         run: |
           cd samples/CameraAccessAndroid
 
-          # Удаляем жестко заданный путь к macOS Java
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Секрет SDK_GITHUB_TOKEN пустой или не задан в Settings -> Secrets!"
+            exit 1
+          fi
+
+          # Выводим структуру settings.gradle.kts в лог для проверки
+          echo "=== settings.gradle.kts ==="
+          cat settings.gradle.kts || cat settings.gradle || true
+          echo "==========================="
+
+          # Удаляем локальные пути macOS
           if [ -f "gradle.properties" ]; then
             sed -i '/org.gradle.java.home/d' gradle.properties
           fi
 
+          # Прописываем токен во все возможные места конфигов
           echo "github_token=$GH_TOKEN" >> local.properties
+          echo "github_user=${{ github.actor }}" >> local.properties
+          echo "gpr.token=$GH_TOKEN" >> local.properties
+          echo "gpr.user=${{ github.actor }}" >> local.properties
 
+          echo "github_token=$GH_TOKEN" >> gradle.properties
+          echo "github_user=${{ github.actor }}" >> gradle.properties
+
+          mkdir -p ~/.gradle
+          echo "github_token=$GH_TOKEN" >> ~/.gradle/gradle.properties
+          echo "gpr.token=$GH_TOKEN" >> ~/.gradle/gradle.properties
+          echo "gpr.user=${{ github.actor }}" >> ~/.gradle/gradle.properties
+
+          # Настройка Secrets.kt для ключа Gemini
           SECRET_PATH="app/src/main/java/com/meta/wearable/dat/externalsampleapps/cameraaccess"
           if [ -f "$SECRET_PATH/Secrets.kt.example" ]; then
             cp "$SECRET_PATH/Secrets.kt.example" "$SECRET_PATH/Secrets.kt"
@@ -46,9 +69,13 @@ jobs:
           chmod +x gradlew
 
       - name: Build APK with Gradle
+        env:
+          GITHUB_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd samples/CameraAccessAndroid
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --stacktrace -Pgithub_token="${{ secrets.SDK_GITHUB_TOKEN }}"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
