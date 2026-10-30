@@ -11,53 +11,54 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check Token & Meta SDK Access
+        env:
+          GH_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
+        run: |
+          echo "=========================================="
+          if [ -z "$GH_TOKEN" ]; then
+            echo "ОШИБКА: Секрет SDK_GITHUB_TOKEN пустой!"
+            exit 1
+          fi
+
+          PREFIX=$(echo "$GH_TOKEN" | cut -c 1-4)
+          echo "Префикс вашего токена: $PREFIX"
+
+          if [[ "$PREFIX" != "ghp_" ]]; then
+            echo "ОШИБКА: Токен должен начинаться на 'ghp_'. Вы создали Fine-grained токен вместо Classic!"
+            exit 1
+          fi
+
+          echo "Проверяем доступ к пакету Meta mwdat-core:0.4.0..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ github.actor }}:$GH_TOKEN" "https://maven.pkg.github.com/facebook/meta-wearables-dat-android/com/meta/wearable/mwdat-core/0.4.0/mwdat-core-0.4.0.pom")
+          echo "Код ответа от GitHub Packages: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ОШИБКА: Сервер вернул код $HTTP_CODE вместо 200 OK!"
+            exit 1
+          fi
+          echo "Авторизация в Meta SDK прошла успешно!"
+          echo "=========================================="
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Diagnose and Configure
+      - name: Configure and Build
         env:
           GH_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd samples/CameraAccessAndroid
 
-          echo "=== 1. Проверка типа токена ==="
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Секрет SDK_GITHUB_TOKEN пустой!"
-            exit 1
-          fi
-          echo "Длина токена: ${#GH_TOKEN} символов"
-          TOKEN_PREFIX=$(echo "$GH_TOKEN" | cut -c 1-4)
-          echo "Префикс токена: $TOKEN_PREFIX"
-          if [[ "$TOKEN_PREFIX" == "gith" ]]; then
-            echo "::error::Внимание! Вы используете Fine-grained токен (github_pat_). Нужен Classic токен (ghp_)!"
-          fi
-
-          echo "=== 2. Содержимое settings.gradle.kts ==="
-          cat settings.gradle.kts || cat settings.gradle || true
-          echo "=========================================="
-
-          echo "=== 3. Проверка ответа GitHub Packages ==="
-          curl -i -u "${{ github.actor }}:$GH_TOKEN" "https://maven.pkg.github.com/facebook/meta-wearables-dat-android/com/meta/wearable/mwdat-core/0.4.0/mwdat-core-0.4.0.pom" || true
-
-          # Удаление локальных путей macOS
           if [ -f "gradle.properties" ]; then
             sed -i '/org.gradle.java.home/d' gradle.properties
           fi
 
-          # Запись данных авторизации во все конфиги
-          for file in local.properties gradle.properties; do
-            echo "github_token=$GH_TOKEN" >> $file
-            echo "github_user=${{ github.actor }}" >> $file
-            echo "github_username=${{ github.actor }}" >> $file
-            echo "gpr.token=$GH_TOKEN" >> $file
-            echo "gpr.user=${{ github.actor }}" >> $file
-          done
+          echo "github_token=$GH_TOKEN" > local.properties
 
-          # Настройка Secrets.kt
           SECRET_PATH="app/src/main/java/com/meta/wearable/dat/externalsampleapps/cameraaccess"
           if [ -f "$SECRET_PATH/Secrets.kt.example" ]; then
             cp "$SECRET_PATH/Secrets.kt.example" "$SECRET_PATH/Secrets.kt"
@@ -67,19 +68,8 @@ jobs:
             fi
           fi
 
-      - name: Make gradlew executable
-        run: |
-          cd samples/CameraAccessAndroid
           chmod +x gradlew
-
-      - name: Build APK with Gradle
-        env:
-          GITHUB_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          cd samples/CameraAccessAndroid
-          ./gradlew assembleDebug --stacktrace -Pgithub_token="${{ secrets.SDK_GITHUB_TOKEN }}" -Pgithub_user="${{ github.actor }}"
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
