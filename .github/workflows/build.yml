@@ -17,43 +17,57 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Prepare Configuration
+      - name: Prepare Configuration & Test Token
         env:
           GH_TOKEN: ${{ secrets.SDK_GITHUB_TOKEN }}
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd samples/CameraAccessAndroid
 
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Секрет SDK_GITHUB_TOKEN пустой или не задан в Settings -> Secrets!"
-            exit 1
+          echo "=== Проверка доступности библиотеки Meta через токен ==="
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ github.actor }}:$GH_TOKEN" "https://maven.pkg.github.com/facebook/meta-wearables-dat-android/com/meta/wearable/mwdat-core/0.4.0/mwdat-core-0.4.0.pom")
+          echo "Ответ от GitHub Packages: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::warning::GitHub Packages вернул код $HTTP_STATUS. Если это 401 или 404, то токен не подошел."
           fi
 
-          # Выводим структуру settings.gradle.kts в лог для проверки
-          echo "=== settings.gradle.kts ==="
-          cat settings.gradle.kts || cat settings.gradle || true
-          echo "==========================="
-
-          # Удаляем локальные пути macOS
+          # Удаляем пути к macOS
           if [ -f "gradle.properties" ]; then
             sed -i '/org.gradle.java.home/d' gradle.properties
           fi
 
-          # Прописываем токен во все возможные места конфигов
-          echo "github_token=$GH_TOKEN" >> local.properties
-          echo "github_user=${{ github.actor }}" >> local.properties
-          echo "gpr.token=$GH_TOKEN" >> local.properties
-          echo "gpr.user=${{ github.actor }}" >> local.properties
+          # Заполняем все возможные варианты переменных
+          for file in local.properties gradle.properties; do
+            echo "github_token=$GH_TOKEN" >> $file
+            echo "github_user=${{ github.actor }}" >> $file
+            echo "github_username=${{ github.actor }}" >> $file
+            echo "gpr.token=$GH_TOKEN" >> $file
+            echo "gpr.key=$GH_TOKEN" >> $file
+            echo "gpr.user=${{ github.actor }}" >> $file
+          done
 
-          echo "github_token=$GH_TOKEN" >> gradle.properties
-          echo "github_user=${{ github.actor }}" >> gradle.properties
+          # Внедряем прямую авторизацию в settings.gradle.kts
+          python3 -c "
+          import re
+          path = 'settings.gradle.kts'
+          with open(path, 'r') as f:
+              content = f.read()
+          
+          # Заменяем блок репозитория Meta на гарантированную авторизацию
+          auth_block = '''maven {
+                  url = uri(\"https://maven.pkg.github.com/facebook/meta-wearables-dat-android\")
+                  credentials {
+                      username = \"${{ github.actor }}\"
+                      password = \"$GH_TOKEN\"
+                  }
+              }'''
+          new_content = re.sub(r'maven\s*\{\s*url\s*=\s*uri\([\"\\\']https://maven\.pkg\.github\.com/facebook/meta-wearables-dat-android[\"\\\']\)[^}]*\}', auth_block, content, flags=re.DOTALL)
+          with open(path, 'w') as f:
+              f.write(new_content)
+          "
 
-          mkdir -p ~/.gradle
-          echo "github_token=$GH_TOKEN" >> ~/.gradle/gradle.properties
-          echo "gpr.token=$GH_TOKEN" >> ~/.gradle/gradle.properties
-          echo "gpr.user=${{ github.actor }}" >> ~/.gradle/gradle.properties
-
-          # Настройка Secrets.kt для ключа Gemini
+          # Настройка Secrets.kt
           SECRET_PATH="app/src/main/java/com/meta/wearable/dat/externalsampleapps/cameraaccess"
           if [ -f "$SECRET_PATH/Secrets.kt.example" ]; then
             cp "$SECRET_PATH/Secrets.kt.example" "$SECRET_PATH/Secrets.kt"
@@ -75,7 +89,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd samples/CameraAccessAndroid
-          ./gradlew assembleDebug --stacktrace -Pgithub_token="${{ secrets.SDK_GITHUB_TOKEN }}"
+          ./gradlew assembleDebug --stacktrace -Pgithub_token="${{ secrets.SDK_GITHUB_TOKEN }}" -Pgithub_user="${{ github.actor }}"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
